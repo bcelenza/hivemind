@@ -1,0 +1,59 @@
+[package]
+name = "hivemind"
+version = "0.1.0"
+edition = "2021"
+authors = ["Hivemind Contributors"]
+description = "Distributed rate limiting service for Envoy Proxy"
+license = "Apache-2.0"
+repository = "https://github.com/bcelenza/hivemind"
+keywords = ["rate-limiting", "envoy", "grpc", "distributed"]
+categories = ["network-programming", "web-programming"]
+
+[dependencies]
+# gRPC and networking
+tonic = "0.12"
+prost = "0.13"
+tokio = { version = "1.40", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Configuration
+config = "0.14"
+
+# TLS
+rustls = "0.23"
+tokio-rustls = "0.26"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Async utilities
+async-trait = "0.1"
+futures = "0.3"
+
+# Time and duration
+chrono = "0.4"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[[bin]]
+name = "hivemind"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
