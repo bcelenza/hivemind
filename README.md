@@ -1,5 +1,7 @@
 # Hivemind
 
+> ⚠️ **Notice**: This project is a prototype/proof-of-concept and is not intended for production use. It is provided as-is for experimentation and learning purposes.
+
 Distributed rate limiting service for Envoy Proxy written in Rust.
 
 ## Overview
@@ -53,11 +55,6 @@ Hivemind also supports **standalone mode** (no mesh) for single-instance deploym
 - **Distributed Architecture**: Peer mesh for state sharing without centralized storage
 - **Sidecar Deployment**: Runs alongside your application and Envoy proxy
 - **Low Latency**: Sub-millisecond rate limit decisions
-- **Observability**: OpenTelemetry metrics and tracing support
-
-## Documentation
-
-See [SPECIFICATION.md](SPECIFICATION.md) for the complete technical specification.
 
 ## Quick Start
 
@@ -213,10 +210,6 @@ docker build -t hivemind:latest .
 # Run
 docker run -p 8081:8081 -v $(pwd)/config.yaml:/etc/hivemind/config.yaml hivemind:latest
 ```
-
-## License
-
-Apache License 2.0 - See LICENSE file for details.
 
 ## References
 

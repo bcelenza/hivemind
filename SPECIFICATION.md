@@ -644,22 +644,14 @@ The implementation SHOULD prefer using well-established, actively maintained thi
 - [ ] Admin API
 - [ ] Deployment tooling
 
-## 14. Open Questions
-
-1. **CRDT vs Gossip**: Which specific CRDT variant provides best balance of accuracy and performance?
-2. **Window alignment**: How to handle time window alignment across nodes with clock skew?
-3. **Backpressure**: How to handle backpressure when mesh sync falls behind?
-4. **Storage**: Should we add optional persistent storage for state recovery?
-5. **Multi-cluster**: Support for multiple isolated rate limit domains in single mesh?
-
-## 15. References
+## 14. References
 
 - [Envoy Rate Limit Service](https://www.envoyproxy.io/docs/envoy/latest/api-v3/service/ratelimit/v3/rls.proto)
 - [Envoy Global Rate Limiting](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/other_features/global_rate_limiting)
 - [CRDTs: Consistency without concurrency control](https://hal.inria.fr/inria-00609399/document)
 - [Gossip Protocols](https://www.cs.cornell.edu/home/rvr/papers/flowgossip.pdf)
 
-## 16. Glossary
+## 15. Glossary
 
 - **CRDT**: Conflict-free Replicated Data Type
 - **Descriptor**: Key-value pair used for rate limit matching
