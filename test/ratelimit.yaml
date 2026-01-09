@@ -1,0 +1,28 @@
+# Rate limit configuration for integration tests
+# Using low limits to make testing faster
+
+domain: test_domain
+descriptors:
+  # Very low limit for testing - 5 requests per second
+  - key: test_key
+    value: limited
+    rate_limit:
+      requests_per_unit: 5
+      unit: second
+      name: "Test rate limit"
+
+  # Higher limit for comparison
+  - key: test_key
+    value: unlimited
+    rate_limit:
+      requests_per_unit: 10000
+      unit: second
+      name: "Effectively unlimited"
+
+  # Per-path rate limiting
+  - key: path
+    value: "/api/slow"
+    rate_limit:
+      requests_per_unit: 2
+      unit: second
+      name: "Slow endpoint limit"

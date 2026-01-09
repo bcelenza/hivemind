@@ -1,0 +1,35 @@
+services:
+  # Simple backend service (httpbin for echo responses)
+  backend:
+    image: kennethreitz/httpbin:latest
+    expose:
+      - "80"
+
+  # Hivemind rate limiting service
+  hivemind:
+    build:
+      context: ..
+      dockerfile: test/Dockerfile.hivemind
+    command: ["-c", "/etc/hivemind/ratelimit.yaml", "-a", "0.0.0.0:8081"]
+    volumes:
+      - ./ratelimit.yaml:/etc/hivemind/ratelimit.yaml:ro
+    expose:
+      - "8081"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8081"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Envoy proxy
+  envoy:
+    image: envoyproxy/envoy:v1.31-latest
+    volumes:
+      - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "10000:10000"
+    depends_on:
+      hivemind:
+        condition: service_healthy
+      backend:
+        condition: service_started

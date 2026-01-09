@@ -78,11 +78,48 @@ cargo build
 # Release build with optimizations
 cargo build --release
 
-# Run tests
+# Run unit tests
 cargo test
 
 # Run with logging
 RUST_LOG=info cargo run
+```
+
+### Integration Tests
+
+The project includes integration tests that verify Hivemind works correctly with Envoy Proxy. The tests use Docker Compose to spin up a complete environment with Hivemind, Envoy, and a backend service.
+
+**Prerequisites:**
+- Docker and Docker Compose
+
+**Running integration tests:**
+
+```bash
+cd test
+make test-integration
+```
+
+This will:
+1. Build the Hivemind Docker image
+2. Start Hivemind, Envoy, and a backend service
+3. Run tests that verify rate limiting behavior
+4. Clean up all containers
+
+**Manual testing:**
+
+```bash
+# Start the test environment
+cd test
+make test-integration-up
+
+# Make requests (rate limit is 5/sec)
+curl http://localhost:10000/status/200
+
+# View logs
+make test-integration-logs
+
+# Stop the environment
+make test-integration-down
 ```
 
 ## Deployment
