@@ -51,22 +51,6 @@ See `config/ratelimit.yaml` for rate limit rule examples.
 
 ## Development
 
-### Project Structure
-
-```
-hivemind/
-├── src/
-│   ├── main.rs           # Entry point
-│   ├── grpc/             # gRPC server implementation (TODO)
-│   ├── state/            # Rate limit state management (TODO)
-│   ├── mesh/             # Peer mesh coordinator (TODO)
-│   └── config/           # Configuration loading (TODO)
-├── proto/                # Protobuf definitions
-├── config.yaml           # Service configuration
-├── config/
-│   └── ratelimit.yaml    # Rate limit rules
-└── SPECIFICATION.md      # Technical specification
-
 ```
 
 ### Building from Source
@@ -137,20 +121,6 @@ docker build -t hivemind:latest .
 # Run
 docker run -p 8081:8081 -v $(pwd)/config.yaml:/etc/hivemind/config.yaml hivemind:latest
 ```
-
-## Roadmap
-
-- [x] Project initialization
-- [ ] Phase 1: Core rate limiting (Weeks 1-4)
-- [ ] Phase 2: Distributed state (Weeks 5-8)
-- [ ] Phase 3: Production readiness (Weeks 9-12)
-- [ ] Phase 4: Advanced features (Weeks 13-16)
-
-See [SPECIFICATION.md](SPECIFICATION.md#13-milestones) for detailed milestones.
-
-## Contributing
-
-Contributions are welcome! Please see CONTRIBUTING.md (coming soon) for guidelines.
 
 ## License
 

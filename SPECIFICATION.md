@@ -616,28 +616,28 @@ The implementation SHOULD prefer using well-established, actively maintained thi
 
 ## 13. Milestones
 
-### Phase 1: Core Implementation (Weeks 1-4)
+### Phase 1: Core Implementation
 - [x] Project setup and structure
 - [x] gRPC server implementation
 - [x] Basic rate limiting logic
 - [x] Configuration loading
 - [x] Unit tests
 
-### Phase 2: Distributed State (Weeks 5-8)
+### Phase 2: Distributed State
 - [ ] CRDT implementation for counters
 - [ ] Gossip protocol implementation
 - [ ] Peer discovery and management
 - [ ] State synchronization
 - [ ] Integration tests
 
-### Phase 3: Production Readiness (Weeks 9-12)
+### Phase 3: Production Readiness
 - [ ] Basic metrics (Prometheus endpoint)
 - [ ] Security (TLS/mTLS)
 - [ ] Performance optimization
 - [ ] Documentation
 - [ ] Load testing
 
-### Phase 4: Advanced Features (Weeks 13-16)
+### Phase 4: Advanced Features
 - [ ] OpenTelemetry metrics and tracing (OTEL integration)
 - [ ] Dynamic configuration updates
 - [ ] Advanced Envoy features
