@@ -11,6 +11,7 @@ use crate::grpc::proto::envoy::service::ratelimit::v3::rate_limit_response::{
 
 use super::counter::{RateLimitCounter, TimeWindow};
 use super::descriptor::DescriptorKey;
+use super::rules::RateLimitConfig;
 
 /// Default rate limit when no specific limit is configured.
 const DEFAULT_LIMIT: u64 = 1000;
@@ -23,10 +24,8 @@ const DEFAULT_WINDOW: TimeWindow = TimeWindow::Second;
 pub struct RateLimiter {
     /// Rate limit counters indexed by descriptor key
     counters: RwLock<HashMap<DescriptorKey, RateLimitCounter>>,
-    /// Configured rate limits (domain -> descriptor pattern -> limit config)
-    /// TODO: This will be populated from configuration in a later phase
-    #[allow(dead_code)]
-    limits: RwLock<HashMap<String, HashMap<String, LimitConfig>>>,
+    /// Configured rate limits loaded from configuration
+    config: RwLock<RateLimitConfig>,
 }
 
 /// Configuration for a rate limit.
@@ -37,8 +36,6 @@ pub struct LimitConfig {
     /// Time window for the limit
     pub window: TimeWindow,
     /// Name/description of this limit
-    /// TODO: Will be used when configuration loading is implemented
-    #[allow(dead_code)]
     pub name: Option<String>,
 }
 
@@ -57,8 +54,30 @@ impl RateLimiter {
     pub fn new() -> Self {
         Self {
             counters: RwLock::new(HashMap::new()),
-            limits: RwLock::new(HashMap::new()),
+            config: RwLock::new(RateLimitConfig::new()),
         }
+    }
+
+    /// Create a new rate limiter with the given configuration.
+    pub fn with_config(config: RateLimitConfig) -> Self {
+        Self {
+            counters: RwLock::new(HashMap::new()),
+            config: RwLock::new(config),
+        }
+    }
+
+    /// Update the rate limit configuration.
+    ///
+    /// This does not clear existing counters - they will continue with
+    /// their current state but may use new limits on their next check.
+    pub fn set_config(&self, config: RateLimitConfig) {
+        let mut cfg = self.config.write().unwrap();
+        *cfg = config;
+    }
+
+    /// Get the current configuration.
+    pub fn config(&self) -> RateLimitConfig {
+        self.config.read().unwrap().clone()
     }
 
     /// Check the rate limit for a given domain and descriptor.
@@ -85,8 +104,7 @@ impl RateLimiter {
             let counter = counters
                 .entry(key.clone())
                 .or_insert_with(|| {
-                    // TODO: Look up the configured limit for this descriptor
-                    // For now, use default limits
+                    // Look up the configured limit for this descriptor
                     let config = self.get_limit_config(domain, descriptor);
                     debug!(
                         key = %key,
@@ -139,8 +157,11 @@ impl RateLimiter {
 
     /// Get the limit configuration for a descriptor.
     ///
-    /// TODO: This will be enhanced to support configuration-based limits.
-    fn get_limit_config(&self, _domain: &str, descriptor: &RateLimitDescriptor) -> LimitConfig {
+    /// This looks up the limit in the following order:
+    /// 1. Override specified in the descriptor itself
+    /// 2. Configured limit from the rate limit configuration
+    /// 3. Default limit
+    fn get_limit_config(&self, domain: &str, descriptor: &RateLimitDescriptor) -> LimitConfig {
         // Check if there's an override in the descriptor itself
         if let Some(ref limit_override) = descriptor.limit {
             let window = TimeWindow::from_proto(limit_override.unit).unwrap_or(DEFAULT_WINDOW);
@@ -151,8 +172,17 @@ impl RateLimiter {
             };
         }
 
-        // TODO: Look up configured limits based on domain and descriptor entries
-        // For now, return default limits
+        // Look up configured limits based on domain and descriptor entries
+        let config = self.config.read().unwrap();
+        if let Some(rule) = config.find_limit(domain, descriptor) {
+            return LimitConfig {
+                limit: rule.requests_per_unit,
+                window: rule.unit.into(),
+                name: rule.name.clone(),
+            };
+        }
+
+        // Fall back to default limits
         LimitConfig::default()
     }
 
@@ -284,5 +314,136 @@ mod tests {
 
         limiter.clear();
         assert_eq!(limiter.counter_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_with_config() {
+        let yaml = r#"
+domain: test_domain
+descriptors:
+  - key: api_key
+    rate_limit:
+      requests_per_unit: 5
+      unit: second
+"#;
+        let config = RateLimitConfig::from_yaml(yaml).unwrap();
+        let limiter = RateLimiter::with_config(config);
+        let descriptor = create_test_descriptor("api_key", "my_key");
+
+        // Make 5 requests (should all be OK)
+        for i in 1..=5 {
+            let status = limiter.check_rate_limit("test_domain", &descriptor, 1).await;
+            assert_eq!(status.code(), Code::Ok, "Request {} should be OK", i);
+        }
+
+        // 6th request should be over limit
+        let status = limiter.check_rate_limit("test_domain", &descriptor, 1).await;
+        assert_eq!(status.code(), Code::OverLimit);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_hierarchical_config() {
+        let yaml = r#"
+domain: test_domain
+descriptors:
+  - key: source_cluster
+    rate_limit:
+      requests_per_unit: 100
+      unit: second
+    descriptors:
+      - key: destination_cluster
+        value: critical
+        rate_limit:
+          requests_per_unit: 10
+          unit: second
+"#;
+        let config = RateLimitConfig::from_yaml(yaml).unwrap();
+        let limiter = RateLimiter::with_config(config);
+
+        // Test general source_cluster limit (100/s)
+        let general_descriptor = create_test_descriptor("source_cluster", "frontend");
+        for _ in 0..100 {
+            let status = limiter.check_rate_limit("test_domain", &general_descriptor, 1).await;
+            assert_eq!(status.code(), Code::Ok);
+        }
+        let status = limiter.check_rate_limit("test_domain", &general_descriptor, 1).await;
+        assert_eq!(status.code(), Code::OverLimit);
+
+        // Test specific critical destination (10/s)
+        let critical_descriptor = RateLimitDescriptor {
+            entries: vec![
+                Entry {
+                    key: "source_cluster".to_string(),
+                    value: "frontend".to_string(),
+                },
+                Entry {
+                    key: "destination_cluster".to_string(),
+                    value: "critical".to_string(),
+                },
+            ],
+            limit: None,
+        };
+
+        for _ in 0..10 {
+            let status = limiter.check_rate_limit("test_domain", &critical_descriptor, 1).await;
+            assert_eq!(status.code(), Code::Ok);
+        }
+        let status = limiter.check_rate_limit("test_domain", &critical_descriptor, 1).await;
+        assert_eq!(status.code(), Code::OverLimit);
+    }
+
+    #[tokio::test]
+    async fn test_update_config() {
+        let limiter = RateLimiter::new();
+        let descriptor = create_test_descriptor("api_key", "test");
+
+        // With default config (1000/s limit), make some requests
+        for _ in 0..100 {
+            let status = limiter.check_rate_limit("test_domain", &descriptor, 1).await;
+            assert_eq!(status.code(), Code::Ok);
+        }
+
+        // Update config with stricter limit
+        let yaml = r#"
+domain: test_domain
+descriptors:
+  - key: api_key
+    rate_limit:
+      requests_per_unit: 5
+      unit: second
+"#;
+        let config = RateLimitConfig::from_yaml(yaml).unwrap();
+        limiter.set_config(config);
+
+        // The existing counter continues - it already has 100 hits
+        // New descriptors will use the new config
+        let new_descriptor = create_test_descriptor("api_key", "new_key");
+        for _ in 0..5 {
+            let status = limiter.check_rate_limit("test_domain", &new_descriptor, 1).await;
+            assert_eq!(status.code(), Code::Ok);
+        }
+        let status = limiter.check_rate_limit("test_domain", &new_descriptor, 1).await;
+        assert_eq!(status.code(), Code::OverLimit);
+    }
+
+    #[tokio::test]
+    async fn test_unconfigured_domain_uses_defaults() {
+        let yaml = r#"
+domain: configured_domain
+descriptors:
+  - key: api_key
+    rate_limit:
+      requests_per_unit: 5
+      unit: second
+"#;
+        let config = RateLimitConfig::from_yaml(yaml).unwrap();
+        let limiter = RateLimiter::with_config(config);
+
+        // Request to unconfigured domain should use default limit (1000/s)
+        let descriptor = create_test_descriptor("api_key", "test");
+        for _ in 0..100 {
+            let status = limiter.check_rate_limit("unconfigured_domain", &descriptor, 1).await;
+            assert_eq!(status.code(), Code::Ok);
+        }
     }
 }

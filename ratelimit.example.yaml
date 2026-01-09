@@ -1,0 +1,54 @@
+# Example Rate Limit Configuration for Hivemind
+#
+# This file demonstrates the rate limit configuration format compatible
+# with Envoy's global rate limiting.
+#
+# Rate limits are organized by domain, with hierarchical descriptor matching.
+# More specific matches (deeper in the hierarchy) take precedence.
+
+domain: default
+descriptors:
+  # Rate limit by API key - applies to any value
+  - key: api_key
+    rate_limit:
+      requests_per_unit: 1000
+      unit: minute
+      name: "API key rate limit"
+
+  # Rate limit by source cluster with different tiers
+  - key: source_cluster
+    value: premium
+    rate_limit:
+      requests_per_unit: 10000
+      unit: second
+      name: "Premium tier"
+
+  - key: source_cluster
+    value: standard
+    rate_limit:
+      requests_per_unit: 1000
+      unit: second
+      name: "Standard tier"
+    descriptors:
+      # More restrictive limit for specific destination
+      - key: destination_cluster
+        value: critical_service
+        rate_limit:
+          requests_per_unit: 100
+          unit: second
+          name: "Standard tier to critical service"
+
+  # Rate limit by remote address (per-IP limiting)
+  - key: remote_address
+    rate_limit:
+      requests_per_unit: 100
+      unit: second
+      name: "Per-IP rate limit"
+
+  # Generic key for custom rate limiting
+  - key: generic_key
+    value: path_based
+    rate_limit:
+      requests_per_unit: 500
+      unit: minute
+      name: "Path-based rate limit"

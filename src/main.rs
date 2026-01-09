@@ -1,14 +1,32 @@
 use std::sync::Arc;
+use clap::Parser;
 use tokio::signal;
-use tracing::{info, Level};
+use tracing::{info, warn, Level};
 use tracing_subscriber;
 
 use hivemind::config::HivemindConfig;
 use hivemind::grpc::GrpcServer;
-use hivemind::ratelimit::RateLimiter;
+use hivemind::ratelimit::{RateLimiter, RateLimitConfig};
+
+/// Hivemind - Distributed rate limiting service for Envoy Proxy
+#[derive(Parser, Debug)]
+#[command(name = "hivemind")]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Path to the rate limit configuration file
+    #[arg(short = 'c', long = "config")]
+    config: Option<String>,
+
+    /// gRPC server address
+    #[arg(short = 'a', long = "addr", default_value = "127.0.0.1:8081")]
+    addr: String,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Parse command-line arguments
+    let args = Args::parse();
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_max_level(Level::INFO)
@@ -19,12 +37,24 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting Hivemind Rate Limiting Service");
     info!("Version: {}", env!("CARGO_PKG_VERSION"));
 
-    // Load configuration (use defaults for now)
-    let config = HivemindConfig::default();
+    // Load configuration with CLI overrides
+    let mut config = HivemindConfig::default();
+
+    // Override with CLI arguments
+    if let Some(ref config_path) = args.config {
+        config.rate_limiting.config_path = Some(config_path.clone());
+    }
+    if let Ok(addr) = args.addr.parse() {
+        config.server.grpc_addr = addr;
+    }
+
     info!(grpc_addr = %config.server.grpc_addr, "Configuration loaded");
 
-    // Initialize the rate limiter
-    let rate_limiter = Arc::new(RateLimiter::new());
+    // Load rate limit rules from configuration file/directory
+    let rate_limit_config = load_rate_limit_config(&config);
+
+    // Initialize the rate limiter with configuration
+    let rate_limiter = Arc::new(RateLimiter::with_config(rate_limit_config));
     info!("Rate limiter initialized");
 
     // Create and start the gRPC server
@@ -39,6 +69,33 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Hivemind Rate Limiting Service stopped");
     Ok(())
+}
+
+/// Load rate limit configuration from the configured file path.
+fn load_rate_limit_config(config: &HivemindConfig) -> RateLimitConfig {
+    if let Some(ref config_path) = config.rate_limiting.config_path {
+        match RateLimitConfig::from_file(config_path) {
+            Ok(cfg) => {
+                info!(
+                    path = %config_path,
+                    domain_count = cfg.domains.len(),
+                    "Rate limit configuration loaded"
+                );
+                return cfg;
+            }
+            Err(e) => {
+                warn!(
+                    path = %config_path,
+                    error = %e,
+                    "Failed to load rate limit configuration, using defaults"
+                );
+            }
+        }
+    } else {
+        info!("No rate limit configuration path specified, using defaults");
+    }
+
+    RateLimitConfig::new()
 }
 
 /// Wait for a shutdown signal (Ctrl+C or SIGTERM).

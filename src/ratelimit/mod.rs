@@ -3,7 +3,9 @@
 mod limiter;
 mod counter;
 mod descriptor;
+mod rules;
 
-pub use limiter::RateLimiter;
+pub use limiter::{RateLimiter, LimitConfig};
 pub use counter::{RateLimitCounter, TimeWindow};
 pub use descriptor::DescriptorKey;
+pub use rules::{RateLimitConfig, DomainConfig, DescriptorConfig, RateLimitRule, TimeUnit};

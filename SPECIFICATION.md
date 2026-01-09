@@ -619,9 +619,9 @@ The implementation SHOULD prefer using well-established, actively maintained thi
 ### Phase 1: Core Implementation (Weeks 1-4)
 - [x] Project setup and structure
 - [x] gRPC server implementation
-- [ ] Basic rate limiting logic
-- [ ] Configuration loading
-- [ ] Unit tests
+- [x] Basic rate limiting logic
+- [x] Configuration loading
+- [x] Unit tests
 
 ### Phase 2: Distributed State (Weeks 5-8)
 - [ ] CRDT implementation for counters
