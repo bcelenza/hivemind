@@ -4,7 +4,47 @@ Distributed rate limiting service for Envoy Proxy written in Rust.
 
 ## Overview
 
-Hivemind is a high-performance, distributed rate limiting service that integrates with Envoy Proxy's global rate limiting API. It uses a peer-to-peer mesh architecture for state synchronization to avoid requiring acentralized storage or other potential single point of failure.
+Hivemind is a high-performance, distributed rate limiting service that integrates with Envoy Proxy's global rate limiting API. It uses a peer-to-peer mesh architecture for state synchronization to avoid requiring a centralized storage or other potential single point of failure.
+
+## Distributed vs. Centralized Rate Limiting
+
+Rate limiting architectures generally fall into two categories, each with distinct trade-offs:
+
+### Centralized Rate Limiting
+
+A centralized approach uses a single source of truth (typically Redis or a similar data store) for all rate limit counters.
+
+**Pros:**
+- **Exact enforcement**: All nodes see the same counter values with strong consistency
+- **Simple mental model**: One counter per rate limit key, no synchronization complexity
+- **Immediate propagation**: Counter updates are instantly visible to all nodes
+
+**Cons:**
+- **Single point of failure**: If the central store goes down, rate limiting fails (or must fail-open)
+- **Network latency**: Every rate limit check requires a round-trip to the central store
+- **Scalability limits**: Central store can become a bottleneck under high load
+- **Operational complexity**: Requires provisioning, monitoring, and maintaining additional infrastructure
+
+**Best for:** Scenarios requiring exact rate limit enforcement, such as financial/billing use cases.
+
+### Distributed Rate Limiting (Hivemind's Approach)
+
+Hivemind uses gossip-based eventual consistency where each node maintains its own counters and shares state with peers.
+
+**Pros:**
+- **No single point of failure**: Cluster continues operating if nodes fail
+- **Lower latency**: Rate limit decisions are made locally without network round-trips
+- **Horizontal scalability**: Adding nodes increases capacity without bottlenecks
+- **Simpler deployment**: No external dependencies; runs as a sidecar alongside your application
+
+**Cons:**
+- **Eventual consistency**: Counter values may temporarily diverge across nodes
+- **Potential overshoot**: During propagation delay, the cluster may allow slightly more requests than the configured limit
+- **Consistency window**: The gossip interval (default 100ms) determines how quickly state converges
+
+**Best for:** High-throughput APIs where approximate enforcement is acceptable, DDoS protection, preventing abuse, or environments where operational simplicity is valued over exact precision.
+
+Hivemind also supports **standalone mode** (no mesh) for single-instance deployments or when running behind a load balancer that routes consistently to the same instance.
 
 ## Features
 
