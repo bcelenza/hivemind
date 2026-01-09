@@ -1,0 +1,122 @@
+services:
+  # Simple backend service (httpbin for echo responses)
+  backend:
+    image: kennethreitz/httpbin:latest
+    expose:
+      - "80"
+
+  # Hivemind node 1 - primary node
+  hivemind-1:
+    build:
+      context: ..
+      dockerfile: test/Dockerfile.hivemind
+    command: [
+      "-c", "/etc/hivemind/ratelimit.yaml",
+      "-a", "0.0.0.0:8081",
+      "--mesh",
+      "--node-id", "node-1",
+      "--mesh-addr", "0.0.0.0:7946"
+    ]
+    volumes:
+      - ./ratelimit.yaml:/etc/hivemind/ratelimit.yaml:ro
+    expose:
+      - "8081"
+      - "7946"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8081"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Hivemind node 2 - joins via node 1
+  hivemind-2:
+    build:
+      context: ..
+      dockerfile: test/Dockerfile.hivemind
+    command: [
+      "-c", "/etc/hivemind/ratelimit.yaml",
+      "-a", "0.0.0.0:8081",
+      "--mesh",
+      "--node-id", "node-2",
+      "--mesh-addr", "0.0.0.0:7946",
+      "--peers", "hivemind-1:7946"
+    ]
+    volumes:
+      - ./ratelimit.yaml:/etc/hivemind/ratelimit.yaml:ro
+    expose:
+      - "8081"
+      - "7946"
+    depends_on:
+      hivemind-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8081"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Hivemind node 3 - joins via node 1
+  hivemind-3:
+    build:
+      context: ..
+      dockerfile: test/Dockerfile.hivemind
+    command: [
+      "-c", "/etc/hivemind/ratelimit.yaml",
+      "-a", "0.0.0.0:8081",
+      "--mesh",
+      "--node-id", "node-3",
+      "--mesh-addr", "0.0.0.0:7946",
+      "--peers", "hivemind-1:7946"
+    ]
+    volumes:
+      - ./ratelimit.yaml:/etc/hivemind/ratelimit.yaml:ro
+    expose:
+      - "8081"
+      - "7946"
+    depends_on:
+      hivemind-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8081"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Envoy proxy for node 1
+  envoy-1:
+    image: envoyproxy/envoy:v1.31-latest
+    volumes:
+      - ./envoy.distributed.node1.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "10001:10000"
+    depends_on:
+      hivemind-1:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
+  # Envoy proxy for node 2
+  envoy-2:
+    image: envoyproxy/envoy:v1.31-latest
+    volumes:
+      - ./envoy.distributed.node2.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "10002:10000"
+    depends_on:
+      hivemind-2:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
+  # Envoy proxy for node 3
+  envoy-3:
+    image: envoyproxy/envoy:v1.31-latest
+    volumes:
+      - ./envoy.distributed.node3.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "10003:10000"
+    depends_on:
+      hivemind-3:
+        condition: service_healthy
+      backend:
+        condition: service_started

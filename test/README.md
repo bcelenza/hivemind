@@ -9,21 +9,41 @@ This directory contains integration tests for Hivemind with Envoy Proxy.
 
 ## Running the Tests
 
+### Single Node Tests
+
 ```bash
-# Start the test environment
-docker-compose -f test/docker-compose.yaml up -d
+# Run all single-node integration tests
+make test-integration
 
-# Wait for services to be ready
-sleep 5
+# Or manually:
+docker-compose -f docker-compose.yaml up -d
+./run_tests.sh
+docker-compose -f docker-compose.yaml down
+```
 
-# Run the integration tests
-./test/run_tests.sh
+### Distributed (Multi-Node) Tests
 
-# Clean up
-docker-compose -f test/docker-compose.yaml down
+```bash
+# Run all distributed integration tests
+make test-distributed
+
+# Or manually:
+docker-compose -f docker-compose.distributed.yaml up -d
+sleep 10  # Wait for cluster to form
+./run_distributed_tests.sh
+docker-compose -f docker-compose.distributed.yaml down
+```
+
+### All Tests
+
+```bash
+# Run unit tests, single-node integration, and distributed tests
+make test-all
 ```
 
 ## Test Architecture
+
+### Single Node Setup
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
@@ -38,13 +58,57 @@ docker-compose -f test/docker-compose.yaml down
                    └─────────────┘
 ```
 
-- **Test Script**: Makes HTTP requests to Envoy and verifies rate limiting behavior
-- **Envoy**: Routes requests and calls Hivemind for rate limit decisions
-- **Hivemind**: Enforces rate limits based on configuration
-- **Backend**: Simple HTTP server (httpbin) to return responses
+### Distributed Setup (3 Nodes)
+
+```
+                          ┌─────────────────────────────────────────────┐
+                          │           Cluster (Chitchat Gossip)         │
+                          │                                             │
+┌────────┐    ┌────────┐  │  ┌────────────┐                            │
+│ Envoy  │───▶│Hivemind│◀─┼──│            │                            │
+│   1    │    │   1    │  │  │            │                            │
+└────────┘    └────────┘  │  │            │                            │
+                          │  │   Gossip   │                            │
+┌────────┐    ┌────────┐  │  │   State    │                            │
+│ Envoy  │───▶│Hivemind│◀─┼──│   Sync     │                            │
+│   2    │    │   2    │  │  │            │                            │
+└────────┘    └────────┘  │  │            │                            │
+                          │  │            │                            │
+┌────────┐    ┌────────┐  │  │            │                            │
+│ Envoy  │───▶│Hivemind│◀─┼──│            │                            │
+│   3    │    │   3    │  │  └────────────┘                            │
+└────────┘    └────────┘  │                                             │
+                          └─────────────────────────────────────────────┘
+                                            │
+                                            ▼
+                                     ┌─────────────┐
+                                     │   Backend   │
+                                     │  (httpbin)  │
+                                     └─────────────┘
+```
 
 ## Test Cases
 
-1. **Basic Rate Limiting**: Verify requests are limited after exceeding threshold
-2. **Different Descriptors**: Verify different rate limits apply to different descriptors
+### Single Node Tests
+
+1. **Basic Connectivity**: Verify Envoy can route requests
+2. **Rate Limiting Enforced**: Verify requests are limited after exceeding threshold
 3. **Rate Limit Headers**: Verify X-RateLimit headers are returned
+4. **Rate Limit Reset**: Verify rate limits reset after the time window
+
+### Distributed Tests
+
+1. **All Nodes Accessible**: Verify all 3 nodes are reachable
+2. **State Synchronization**: Verify rate limit state propagates between nodes via gossip
+3. **Single Node Enforcement**: Verify each node enforces its own rate limits
+4. **Distributed Enforcement**: Verify combined counts across nodes trigger rate limiting
+5. **Rate Limit Headers**: Verify headers are present on all nodes
+6. **Cluster Membership**: Verify nodes discover each other and form a cluster
+
+## Configuration
+
+- `ratelimit.yaml`: Rate limit rules (5 requests per second for test_key=limited)
+- `envoy.yaml`: Envoy proxy configuration (single node)
+- `envoy.distributed.node*.yaml`: Envoy configs for each distributed node
+- `docker-compose.yaml`: Single node test environment
+- `docker-compose.distributed.yaml`: 3-node distributed test environment

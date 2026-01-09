@@ -6,7 +6,8 @@ use tracing_subscriber;
 
 use hivemind::config::HivemindConfig;
 use hivemind::grpc::GrpcServer;
-use hivemind::ratelimit::{RateLimiter, RateLimitConfig};
+use hivemind::mesh::{Cluster, ClusterConfig};
+use hivemind::ratelimit::{RateLimiter, RateLimitConfig, DistributedRateLimiter};
 
 /// Hivemind - Distributed rate limiting service for Envoy Proxy
 #[derive(Parser, Debug)]
@@ -20,6 +21,22 @@ struct Args {
     /// gRPC server address
     #[arg(short = 'a', long = "addr", default_value = "127.0.0.1:8081")]
     addr: String,
+
+    /// Enable mesh networking for distributed rate limiting
+    #[arg(long = "mesh", default_value = "false")]
+    mesh_enabled: bool,
+
+    /// Mesh node ID (auto-generated if not specified)
+    #[arg(long = "node-id")]
+    node_id: Option<String>,
+
+    /// Mesh bind address
+    #[arg(long = "mesh-addr", default_value = "0.0.0.0:7946")]
+    mesh_addr: String,
+
+    /// Bootstrap peer addresses (comma-separated)
+    #[arg(long = "peers")]
+    bootstrap_peers: Option<String>,
 }
 
 #[tokio::main]
@@ -53,19 +70,55 @@ async fn main() -> anyhow::Result<()> {
     // Load rate limit rules from configuration file/directory
     let rate_limit_config = load_rate_limit_config(&config);
 
-    // Initialize the rate limiter with configuration
-    let rate_limiter = Arc::new(RateLimiter::with_config(rate_limit_config));
-    info!("Rate limiter initialized");
+    // Initialize and run the gRPC server with the appropriate rate limiter
+    if args.mesh_enabled {
+        // Parse mesh configuration from CLI
+        let mesh_addr: std::net::SocketAddr = args.mesh_addr.parse()
+            .expect("Invalid mesh address");
 
-    // Create and start the gRPC server
-    let grpc_server = GrpcServer::new(config.server.grpc_addr, rate_limiter);
+        let seed_nodes: Vec<String> = args.bootstrap_peers
+            .map(|s| s.split(',')
+                .map(|addr| addr.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect())
+            .unwrap_or_default();
 
-    info!("Starting gRPC server on {}", config.server.grpc_addr);
+        let cluster_config = ClusterConfig {
+            node_id: args.node_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            listen_addr: mesh_addr,
+            advertise_addr: mesh_addr,
+            seed_nodes,
+            cluster_id: "hivemind".to_string(),
+            ..Default::default()
+        };
 
-    // Run the server with graceful shutdown on Ctrl+C
-    grpc_server
-        .serve_with_shutdown(shutdown_signal())
-        .await?;
+        let cluster = Arc::new(Cluster::start(cluster_config).await
+            .expect("Failed to start cluster"));
+
+        let distributed_limiter = Arc::new(DistributedRateLimiter::with_config(
+            cluster.clone(),
+            rate_limit_config,
+        ));
+
+        info!(
+            node_id = %cluster.node_id(),
+            mesh_addr = %args.mesh_addr,
+            "Distributed rate limiter initialized with cluster"
+        );
+
+        let grpc_server = GrpcServer::with_distributed_limiter(config.server.grpc_addr, distributed_limiter);
+
+        info!("Starting gRPC server on {}", config.server.grpc_addr);
+        grpc_server.serve_with_shutdown(shutdown_signal()).await?;
+    } else {
+        let rate_limiter = Arc::new(RateLimiter::with_config(rate_limit_config));
+        info!("Local rate limiter initialized");
+
+        let grpc_server = GrpcServer::new(config.server.grpc_addr, rate_limiter);
+
+        info!("Starting gRPC server on {}", config.server.grpc_addr);
+        grpc_server.serve_with_shutdown(shutdown_signal()).await?;
+    }
 
     info!("Hivemind Rate Limiting Service stopped");
     Ok(())

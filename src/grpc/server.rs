@@ -8,28 +8,37 @@ use tracing::{info, error};
 use super::proto::envoy::service::ratelimit::v3::rate_limit_service_server::RateLimitServiceServer;
 use super::service::RateLimitServiceImpl;
 use crate::error::{HivemindError, Result};
-use crate::ratelimit::RateLimiter;
+use crate::ratelimit::{RateLimiter, RateLimiterBackend, DistributedRateLimiter};
 
 /// gRPC server for the rate limit service.
-pub struct GrpcServer {
+pub struct GrpcServer<R: RateLimiterBackend + 'static> {
     /// Address to bind to
     addr: SocketAddr,
     /// The rate limiter instance
-    rate_limiter: Arc<RateLimiter>,
+    rate_limiter: Arc<R>,
 }
 
-impl GrpcServer {
-    /// Create a new gRPC server.
+impl GrpcServer<RateLimiter> {
+    /// Create a new gRPC server with a local rate limiter.
     pub fn new(addr: SocketAddr, rate_limiter: Arc<RateLimiter>) -> Self {
         Self { addr, rate_limiter }
     }
+}
 
+impl GrpcServer<DistributedRateLimiter> {
+    /// Create a new gRPC server with a distributed rate limiter.
+    pub fn with_distributed_limiter(addr: SocketAddr, rate_limiter: Arc<DistributedRateLimiter>) -> Self {
+        Self { addr, rate_limiter }
+    }
+}
+
+impl<R: RateLimiterBackend + 'static> GrpcServer<R> {
     /// Start the gRPC server.
     ///
     /// This method will block until the server is shut down.
     pub async fn serve(self) -> Result<()> {
         let service = RateLimitServiceImpl::new(self.rate_limiter);
-        
+
         info!(
             addr = %self.addr,
             "Starting gRPC server for RateLimitService"
@@ -53,7 +62,7 @@ impl GrpcServer {
         F: std::future::Future<Output = ()> + Send,
     {
         let service = RateLimitServiceImpl::new(self.rate_limiter);
-        
+
         info!(
             addr = %self.addr,
             "Starting gRPC server for RateLimitService with graceful shutdown"

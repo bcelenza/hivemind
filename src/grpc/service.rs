@@ -10,23 +10,23 @@ use super::proto::envoy::service::ratelimit::v3::{
     RateLimitRequest, RateLimitResponse,
 };
 
-use crate::ratelimit::RateLimiter;
+use crate::ratelimit::RateLimiterBackend;
 
 /// Implementation of the Envoy RateLimitService gRPC interface.
-pub struct RateLimitServiceImpl {
+pub struct RateLimitServiceImpl<R: RateLimiterBackend> {
     /// The rate limiter instance
-    rate_limiter: Arc<RateLimiter>,
+    rate_limiter: Arc<R>,
 }
 
-impl RateLimitServiceImpl {
+impl<R: RateLimiterBackend> RateLimitServiceImpl<R> {
     /// Create a new RateLimitServiceImpl with the given rate limiter.
-    pub fn new(rate_limiter: Arc<RateLimiter>) -> Self {
+    pub fn new(rate_limiter: Arc<R>) -> Self {
         Self { rate_limiter }
     }
 }
 
 #[tonic::async_trait]
-impl RateLimitService for RateLimitServiceImpl {
+impl<R: RateLimiterBackend + 'static> RateLimitService for RateLimitServiceImpl<R> {
     /// Determine whether rate limiting should take place.
     ///
     /// This method processes rate limit requests from Envoy proxies and returns
@@ -105,6 +105,7 @@ impl RateLimitService for RateLimitServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ratelimit::RateLimiter;
     use crate::grpc::proto::envoy::extensions::common::ratelimit::v3::{
         rate_limit_descriptor::Entry,
         RateLimitDescriptor,

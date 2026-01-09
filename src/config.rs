@@ -13,6 +13,10 @@ pub struct HivemindConfig {
     /// Rate limiting configuration
     #[serde(default)]
     pub rate_limiting: RateLimitingConfig,
+
+    /// Mesh configuration
+    #[serde(default)]
+    pub mesh: MeshConfig,
 }
 
 impl Default for HivemindConfig {
@@ -20,6 +24,7 @@ impl Default for HivemindConfig {
         Self {
             server: ServerConfig::default(),
             rate_limiting: RateLimitingConfig::default(),
+            mesh: MeshConfig::default(),
         }
     }
 }
@@ -102,6 +107,98 @@ fn default_cache_size() -> usize {
 
 fn default_staleness_threshold() -> u64 {
     500
+}
+
+/// Mesh networking configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshConfig {
+    /// Enable mesh networking for distributed rate limiting.
+    #[serde(default = "default_mesh_enabled")]
+    pub enabled: bool,
+
+    /// Node ID (auto-generated if not specified).
+    pub node_id: Option<String>,
+
+    /// Address to bind the mesh transport to.
+    #[serde(default = "default_mesh_bind_addr")]
+    pub bind_addr: SocketAddr,
+
+    /// Bootstrap peer addresses to connect to on startup.
+    #[serde(default)]
+    pub bootstrap_peers: Vec<String>,
+
+    /// Gossip interval in milliseconds.
+    #[serde(default = "default_gossip_interval")]
+    pub gossip_interval_ms: u64,
+
+    /// Sync interval in milliseconds.
+    #[serde(default = "default_sync_interval")]
+    pub sync_interval_ms: u64,
+
+    /// Maximum number of peers.
+    #[serde(default = "default_max_peers")]
+    pub max_peers: usize,
+
+    /// Health check interval in milliseconds.
+    #[serde(default = "default_health_check_interval")]
+    pub health_check_interval_ms: u64,
+
+    /// Time after which a peer is considered suspect (milliseconds).
+    #[serde(default = "default_suspect_timeout")]
+    pub suspect_timeout_ms: u64,
+
+    /// Time after which a suspect peer is considered failed (milliseconds).
+    #[serde(default = "default_failed_timeout")]
+    pub failed_timeout_ms: u64,
+}
+
+impl Default for MeshConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_mesh_enabled(),
+            node_id: None,
+            bind_addr: default_mesh_bind_addr(),
+            bootstrap_peers: Vec::new(),
+            gossip_interval_ms: default_gossip_interval(),
+            sync_interval_ms: default_sync_interval(),
+            max_peers: default_max_peers(),
+            health_check_interval_ms: default_health_check_interval(),
+            suspect_timeout_ms: default_suspect_timeout(),
+            failed_timeout_ms: default_failed_timeout(),
+        }
+    }
+}
+
+fn default_mesh_enabled() -> bool {
+    false
+}
+
+fn default_mesh_bind_addr() -> SocketAddr {
+    "0.0.0.0:7946".parse().unwrap()
+}
+
+fn default_gossip_interval() -> u64 {
+    100
+}
+
+fn default_sync_interval() -> u64 {
+    1000
+}
+
+fn default_max_peers() -> usize {
+    100
+}
+
+fn default_health_check_interval() -> u64 {
+    1000
+}
+
+fn default_suspect_timeout() -> u64 {
+    5000
+}
+
+fn default_failed_timeout() -> u64 {
+    15000
 }
 
 impl HivemindConfig {

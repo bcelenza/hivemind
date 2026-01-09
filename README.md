@@ -49,6 +49,49 @@ Edit `config.yaml` to configure the service. Key settings:
 
 See `config/ratelimit.yaml` for rate limit rule examples.
 
+### Command Line Options
+
+```bash
+hivemind [OPTIONS]
+
+Options:
+  -c, --config <PATH>       Path to the rate limit configuration file
+  -a, --addr <ADDR>         gRPC server address [default: 127.0.0.1:8081]
+      --mesh                Enable mesh networking for distributed rate limiting
+      --node-id <ID>        Mesh node ID (auto-generated if not specified)
+      --mesh-addr <ADDR>    Mesh bind address [default: 0.0.0.0:7946]
+      --peers <ADDRS>       Bootstrap peer addresses (comma-separated)
+  -h, --help                Print help
+  -V, --version             Print version
+```
+
+### Standalone Mode
+
+By default, Hivemind runs in standalone mode with local rate limiting:
+
+```bash
+hivemind -c config/ratelimit.yaml -a 0.0.0.0:8081
+```
+
+### Distributed Mode (Mesh)
+
+For distributed rate limiting across multiple instances, enable mesh mode with the `--mesh` flag. Nodes use a gossip protocol (Chitchat) to synchronize rate limit counters.
+
+**First node (seed):**
+```bash
+hivemind -c config/ratelimit.yaml -a 0.0.0.0:8081 \
+  --mesh --node-id node-1 --mesh-addr 0.0.0.0:7946
+```
+
+**Additional nodes:**
+```bash
+hivemind -c config/ratelimit.yaml -a 0.0.0.0:8081 \
+  --mesh --node-id node-2 --mesh-addr 0.0.0.0:7946 \
+  --peers node-1:7946
+```
+
+Nodes automatically discover each other through gossip, so you only need to specify one seed peer to join the cluster.
+
 ## Development
 
 ```
@@ -88,6 +131,15 @@ This will:
 2. Start Hivemind, Envoy, and a backend service
 3. Run tests that verify rate limiting behavior
 4. Clean up all containers
+
+**Running distributed integration tests:**
+
+```bash
+cd test
+make test-distributed
+```
+
+This runs a 3-node Hivemind cluster to verify distributed rate limiting and gossip-based state synchronization.
 
 **Manual testing:**
 

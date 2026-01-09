@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::RwLock;
+use async_trait::async_trait;
 use tracing::{debug, trace};
 
 use crate::grpc::proto::envoy::extensions::common::ratelimit::v3::RateLimitDescriptor;
@@ -9,6 +10,7 @@ use crate::grpc::proto::envoy::service::ratelimit::v3::rate_limit_response::{
     Code, DescriptorStatus, RateLimit,
 };
 
+use super::backend::RateLimiterBackend;
 use super::counter::{RateLimitCounter, TimeWindow};
 use super::descriptor::DescriptorKey;
 use super::rules::RateLimitConfig;
@@ -213,6 +215,18 @@ impl RateLimiter {
 impl Default for RateLimiter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[async_trait]
+impl RateLimiterBackend for RateLimiter {
+    async fn check_rate_limit(
+        &self,
+        domain: &str,
+        descriptor: &RateLimitDescriptor,
+        hits: u32,
+    ) -> DescriptorStatus {
+        self.check_rate_limit(domain, descriptor, hits).await
     }
 }
 
