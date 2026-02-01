@@ -247,6 +247,7 @@ mod tests {
             cluster_id: "test-cluster".to_string(),
             gossip_interval: Duration::from_millis(50),
             dead_node_grace_period: Duration::from_secs(60),
+            cache_ttl: Duration::from_millis(100), // Short TTL for tests
         }
     }
 

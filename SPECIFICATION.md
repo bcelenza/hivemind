@@ -233,7 +233,46 @@ struct RateLimitCounter {
 **Limitation:** Maximum count per window is `u32::MAX` (4,294,967,295). This is sufficient
 for most rate limiting use cases.
 
-#### 5.2.2 Peer Node
+#### 5.2.2 Cluster State Cache
+
+To minimize lock contention on the underlying gossip state (Chitchat), the cluster
+module implements a TTL-based read-through cache for distributed counter sums using
+a sharded concurrent hash map (DashMap):
+
+```rust
+struct Cluster {
+    /// Chitchat handle for gossip protocol
+    handle: ChitchatHandle,
+    /// Cached distributed counter sums: key -> CachedCount
+    cached_counts: DashMap<String, CachedCount>,
+    /// Configuration including cache_ttl
+    config: ClusterConfig,
+}
+
+struct CachedCount {
+    /// The cached total count across all nodes
+    total: AtomicU64,
+    /// When this entry was last refreshed (for TTL expiration)
+    refreshed_at_nanos: AtomicU64,
+}
+```
+
+**Caching strategy:**
+- **Cache hits** (lock-free): DashMap read + atomic load, no Chitchat lock
+- **Cache misses**: Acquire Chitchat lock, sum all nodes, update cache
+- **Writes**: Short lock to update local node state, then refresh cache
+
+**TTL configuration:**
+- Default: 500ms (aligns with `staleness_threshold_ms`)
+- Lower TTL = more accurate distributed counts, more lock contention
+- Higher TTL = less accurate counts, better throughput
+
+**DashMap benefits:**
+- Sharded locking (N shards, default = CPU cores × 4)
+- Different keys rarely contend for the same shard
+- Reads for different shards are fully parallel
+
+#### 5.2.3 Peer Node
 ```rust
 struct PeerNode {
     node_id: NodeId,
@@ -310,6 +349,7 @@ mesh:
   gossip_interval_ms: 100
   sync_interval_ms: 1000
   max_peers: 100
+  cache_ttl_ms: 500  # TTL for distributed counter cache (default: 500ms)
 
 rate_limiting:
   config_path: "/etc/ratelimit/config.yaml"
@@ -626,9 +666,8 @@ The implementation SHOULD prefer using well-established, actively maintained thi
 
 ### 12.3 Mesh Dependencies
 
-- **libp2p** or **quinn**: P2P networking (QUIC)
-- CRDT library (e.g., `crdts` crate or custom implementation)
-- **memberlist** or custom gossip implementation
+- **chitchat**: Gossip protocol implementation for cluster membership and state sync
+- **dashmap**: Sharded concurrent hash map for lock-free caching
 
 ## 13. Milestones
 

@@ -50,6 +50,7 @@ clap = { version = "4.5", features = ["derive"] }
 uuid = { version = "1.10", features = ["v4", "serde"] }
 rand = "0.8"
 parking_lot = "0.12"
+dashmap = "6.0"
 
 # Cluster membership and gossip
 chitchat = "0.10"

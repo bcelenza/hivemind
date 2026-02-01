@@ -2,19 +2,29 @@
 //!
 //! This module wraps the chitchat library to provide cluster membership,
 //! failure detection, and state gossip for distributed rate limiting.
+//!
+//! ## Caching Strategy
+//!
+//! To minimize lock contention on the Chitchat state, this module implements
+//! a read-through cache for distributed counter sums. The cache uses a
+//! configurable TTL (default 500ms) that aligns with the bounded staleness
+//! model described in the specification.
+//!
+//! - **Writes** (`increment_counter`): Short lock to update local state, then cache refresh
+//! - **Reads** (`get_count`): Lock-free cache lookup; falls back to Chitchat on cache miss
 
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use chitchat::transport::UdpTransport;
 use chitchat::{
     spawn_chitchat, ChitchatConfig, ChitchatHandle, ChitchatId, FailureDetectorConfig,
 };
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::sync::Mutex;
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 /// Errors that can occur in cluster operations.
 #[derive(Debug, Error)]
@@ -24,6 +34,9 @@ pub enum ClusterError {
     #[error("Failed to join cluster: {0}")]
     JoinError(String),
 }
+
+/// Default cache TTL for distributed counter sums
+const DEFAULT_CACHE_TTL: Duration = Duration::from_millis(500);
 
 /// Configuration for the cluster.
 #[derive(Debug, Clone)]
@@ -42,6 +55,10 @@ pub struct ClusterConfig {
     pub gossip_interval: Duration,
     /// Grace period before considering a dead node's state deletable.
     pub dead_node_grace_period: Duration,
+    /// TTL for cached distributed counter sums.
+    /// Lower values = more accurate but more lock contention.
+    /// Higher values = less accurate but better throughput.
+    pub cache_ttl: Duration,
 }
 
 impl Default for ClusterConfig {
@@ -55,6 +72,7 @@ impl Default for ClusterConfig {
             cluster_id: "hivemind".to_string(),
             gossip_interval: Duration::from_millis(100),
             dead_node_grace_period: Duration::from_secs(3600), // 1 hour
+            cache_ttl: DEFAULT_CACHE_TTL,
         }
     }
 }
@@ -115,15 +133,57 @@ impl CounterKey {
     }
 }
 
+/// Cached counter entry with timestamp for TTL-based expiration.
+struct CachedCount {
+    /// The cached total count across all nodes.
+    total: AtomicU64,
+    /// When this cache entry was last refreshed (nanos since process start).
+    refreshed_at_nanos: AtomicU64,
+}
+
+impl CachedCount {
+    fn new(total: u64, now: Instant, epoch: Instant) -> Self {
+        Self {
+            total: AtomicU64::new(total),
+            refreshed_at_nanos: AtomicU64::new(now.duration_since(epoch).as_nanos() as u64),
+        }
+    }
+
+    fn get(&self) -> u64 {
+        self.total.load(Ordering::Acquire)
+    }
+
+    fn update(&self, total: u64, now: Instant, epoch: Instant) {
+        self.total.store(total, Ordering::Release);
+        self.refreshed_at_nanos.store(
+            now.duration_since(epoch).as_nanos() as u64,
+            Ordering::Release,
+        );
+    }
+
+    fn is_expired(&self, now: Instant, epoch: Instant, ttl: Duration) -> bool {
+        let refreshed_nanos = self.refreshed_at_nanos.load(Ordering::Acquire);
+        let now_nanos = now.duration_since(epoch).as_nanos() as u64;
+        let ttl_nanos = ttl.as_nanos() as u64;
+        now_nanos.saturating_sub(refreshed_nanos) >= ttl_nanos
+    }
+}
+
 /// The cluster handle for distributed state management.
+///
+/// Uses a TTL-based cache for distributed counter sums to minimize
+/// lock contention on the underlying Chitchat state.
 pub struct Cluster {
     /// Our node ID.
     node_id: String,
     /// Chitchat handle.
     handle: ChitchatHandle,
-    /// Configuration (kept for potential future use).
-    #[allow(dead_code)]
+    /// Configuration.
     config: ClusterConfig,
+    /// Cached distributed counter sums: chitchat_key -> CachedCount
+    cached_counts: DashMap<String, CachedCount>,
+    /// Fixed epoch for computing relative timestamps in cache entries.
+    cache_epoch: Instant,
 }
 
 impl std::fmt::Debug for Cluster {
@@ -131,6 +191,7 @@ impl std::fmt::Debug for Cluster {
         f.debug_struct("Cluster")
             .field("node_id", &self.node_id)
             .field("config", &self.config)
+            .field("cached_entries", &self.cached_counts.len())
             .finish()
     }
 }
@@ -179,6 +240,8 @@ impl Cluster {
             node_id: config.node_id.clone(),
             handle,
             config,
+            cached_counts: DashMap::new(),
+            cache_epoch: Instant::now(),
         })
     }
 
@@ -187,50 +250,86 @@ impl Cluster {
         &self.node_id
     }
 
-    /// Get the chitchat handle for direct access.
-    pub fn chitchat(&self) -> Arc<Mutex<chitchat::Chitchat>> {
-        self.handle.chitchat()
+    /// Get the configured cache TTL.
+    pub fn cache_ttl(&self) -> Duration {
+        self.config.cache_ttl
     }
 
     /// Increment a counter and return the total across all nodes.
     ///
-    /// This sets our local contribution for the counter key and reads
-    /// all other nodes' contributions to compute the total.
+    /// This implementation minimizes lock contention by:
+    /// 1. Taking a short lock to update our local value
+    /// 2. Releasing the lock before computing the distributed sum
+    /// 3. Updating the cache with the fresh sum
     pub async fn increment_counter(&self, key: &CounterKey, amount: u64) -> u64 {
         let chitchat_key = key.to_chitchat_key();
         let chitchat_arc = self.handle.chitchat();
-        let mut chitchat = chitchat_arc.lock().await;
 
-        // Get our current local value
-        let current_local: u64 = chitchat
-            .self_node_state()
-            .get(&chitchat_key)
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
+        // Phase 1: Short lock to update our local value
+        {
+            let mut chitchat = chitchat_arc.lock().await;
+            let current_local: u64 = chitchat
+                .self_node_state()
+                .get(&chitchat_key)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
 
-        // Increment and store
-        let new_local = current_local + amount;
-        chitchat.self_node_state().set(&chitchat_key, new_local.to_string());
+            let new_local = current_local + amount;
+            chitchat
+                .self_node_state()
+                .set(&chitchat_key, new_local.to_string());
 
-        debug!(
-            key = %chitchat_key,
-            local_value = new_local,
-            "Incremented local counter"
-        );
+            debug!(
+                key = %chitchat_key,
+                local_value = new_local,
+                "Incremented local counter"
+            );
+        } // Lock released here
 
-        // Sum across all nodes (including ourselves)
-        self.sum_counter_internal(&chitchat, &chitchat_key)
+        // Phase 2: Refresh cache with fresh distributed sum
+        // This takes a separate lock acquisition but ensures we return accurate data
+        self.refresh_cache_for_key(&chitchat_key).await
     }
 
     /// Get the total count for a key across all nodes.
+    ///
+    /// Uses a TTL-based cache to minimize lock contention. Cache hits are
+    /// lock-free; cache misses fall back to querying Chitchat state.
     pub async fn get_count(&self, key: &CounterKey) -> u64 {
         let chitchat_key = key.to_chitchat_key();
+        let now = Instant::now();
+
+        // Fast path: check cache (lock-free DashMap read)
+        if let Some(cached) = self.cached_counts.get(&chitchat_key) {
+            if !cached.is_expired(now, self.cache_epoch, self.config.cache_ttl) {
+                trace!(key = %chitchat_key, "Cache hit for counter");
+                return cached.get();
+            }
+        }
+
+        // Slow path: cache miss or expired, refresh from Chitchat
+        trace!(key = %chitchat_key, "Cache miss for counter, fetching from cluster");
+        self.refresh_cache_for_key(&chitchat_key).await
+    }
+
+    /// Refresh the cache for a specific key and return the fresh total.
+    async fn refresh_cache_for_key(&self, chitchat_key: &str) -> u64 {
         let chitchat_arc = self.handle.chitchat();
         let chitchat = chitchat_arc.lock().await;
-        self.sum_counter_internal(&chitchat, &chitchat_key)
+        let total = self.sum_counter_internal(&chitchat, chitchat_key);
+        drop(chitchat); // Release lock before cache update
+
+        let now = Instant::now();
+        self.cached_counts
+            .entry(chitchat_key.to_string())
+            .and_modify(|cached| cached.update(total, now, self.cache_epoch))
+            .or_insert_with(|| CachedCount::new(total, now, self.cache_epoch));
+
+        total
     }
 
     /// Internal helper to sum a counter across all nodes.
+    /// Must be called while holding the Chitchat lock.
     fn sum_counter_internal(&self, chitchat: &chitchat::Chitchat, key: &str) -> u64 {
         let mut total: u64 = 0;
 
@@ -246,6 +345,20 @@ impl Cluster {
         }
 
         total
+    }
+
+    /// Clear expired entries from the cache.
+    /// Call this periodically to prevent unbounded cache growth.
+    pub fn evict_expired_cache_entries(&self) {
+        let now = Instant::now();
+        self.cached_counts.retain(|_, cached| {
+            !cached.is_expired(now, self.cache_epoch, self.config.cache_ttl)
+        });
+    }
+
+    /// Get the number of entries in the cache.
+    pub fn cache_size(&self) -> usize {
+        self.cached_counts.len()
     }
 
     /// Get the number of live nodes in the cluster.
@@ -291,6 +404,7 @@ mod tests {
             cluster_id: "test-cluster".to_string(),
             gossip_interval: Duration::from_millis(50),
             dead_node_grace_period: Duration::from_secs(60),
+            cache_ttl: Duration::from_millis(100), // Short TTL for tests
         }
     }
 
