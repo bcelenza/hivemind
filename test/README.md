@@ -105,6 +105,47 @@ make test-all
 5. **Rate Limit Headers**: Verify headers are present on all nodes
 6. **Cluster Membership**: Verify nodes discover each other and form a cluster
 
+### Sustained Distributed Tests
+
+The sustained test verifies that distributed rate limiting remains consistent over a longer time period (default: 60 seconds).
+
+```bash
+# Run the sustained test (60 seconds)
+make test-sustained
+
+# Run a quick version (10 seconds) for faster iteration
+make test-sustained-quick
+
+# Custom configuration via environment variables
+TEST_DURATION=120 TOLERANCE_PERCENT=30 make test-sustained
+```
+
+**Prerequisites:**
+- `vegeta` - HTTP load testing tool ([installation](https://github.com/tsenart/vegeta#install))
+- `jq` - JSON processor
+
+**Configuration Options (environment variables):**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TEST_DURATION` | 60 | Test duration in seconds |
+| `RATE_LIMIT` | 5 | Expected rate limit (req/s) |
+| `REQUEST_RATE` | 15 | Requests per second to send |
+| `TOLERANCE_PERCENT` | 40 | % tolerance above rate limit |
+| `WINDOW_FAILURE_THRESHOLD_PERCENT` | 5 | % of windows allowed to fail |
+| `CATASTROPHIC_MULTIPLIER` | 3 | Fail if any window exceeds this × limit |
+
+**Assertions:**
+- Per-second windows: Each 1-second window's allowed requests must stay within tolerance
+- Catastrophic threshold: No single window can exceed 3× the rate limit
+- Overall pass: At least 95% of windows must be within tolerance
+
+**Output includes:**
+- Per-window analysis
+- Average allowed requests/second and overshoot percentage
+- Min/max allowed in any window
+- List of failed windows with their overshoot percentage
+
 ## Configuration
 
 - `ratelimit.yaml`: Rate limit rules (5 requests per second for test_key=limited)
