@@ -54,7 +54,11 @@ Hivemind also supports **standalone mode** (no mesh) for single-instance deploym
 - **gRPC API**: Compatible with Envoy Proxy's rate limit service v3
 - **Distributed Architecture**: Peer mesh for state sharing without centralized storage
 - **Sidecar Deployment**: Runs alongside your application and Envoy proxy
-- **Low Latency**: Sub-millisecond rate limit decisions
+- **Low Latency**: Sub-millisecond rate limit decisions with lock-free counters
+
+## Limitations
+
+- **Maximum requests per window**: 4,294,967,295 (2³²-1). The counter uses a lock-free design that packs the window epoch and count into a single 64-bit atomic value, limiting each to 32 bits. This is sufficient for most rate limiting use cases. If you need higher limits, consider using longer time windows or distributing load across multiple rate limit keys.
 
 ## Quick Start
 

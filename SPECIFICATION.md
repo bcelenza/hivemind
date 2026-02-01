@@ -206,16 +206,32 @@ Must support all Envoy rate limiting features:
 ### 5.2 Data Structures
 
 #### 5.2.1 Rate Limit Counter
+
+The rate limit counter uses a lock-free design with epoch-based time windows. The window
+epoch and count are packed into a single atomic `u64` value, enabling fully lock-free
+operations using compare-and-swap (CAS):
+
 ```rust
 struct RateLimitCounter {
-    descriptor: Vec<DescriptorEntry>,
-    time_window: TimeWindow,
-    current_count: AtomicU64,
-    window_start: Instant,
+    /// Packed state: upper 32 bits = window epoch, lower 32 bits = count
+    state: AtomicU64,
+    /// The limit for this counter
     limit: u64,
-    vector_clock: VectorClock,
+    /// Time window for this counter
+    window: TimeWindow,
+    /// Fixed reference point for computing window epochs
+    epoch_start: Instant,
 }
 ```
+
+**Design benefits:**
+- **Lock-free reads**: `current_count()`, `remaining()` are single atomic loads
+- **Lock-free writes**: `increment()` uses a CAS loop, only retries on concurrent modification
+- **Cache-friendly**: Single cache line for all mutable state
+- **Automatic window rollover**: Epoch computed from elapsed time, no explicit reset needed
+
+**Limitation:** Maximum count per window is `u32::MAX` (4,294,967,295). This is sufficient
+for most rate limiting use cases.
 
 #### 5.2.2 Peer Node
 ```rust
