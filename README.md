@@ -48,6 +48,56 @@ Hivemind uses gossip-based eventual consistency where each node maintains its ow
 
 Hivemind also supports **standalone mode** (no mesh) for single-instance deployments or when running behind a load balancer that routes consistently to the same instance.
 
+## Architecture
+
+```mermaid
+graph LR
+    Client["Client"]
+
+    subgraph pod1 ["Pod / Instance 1"]
+        direction LR
+        Envoy1["Envoy Proxy"] --> App1["Application"]
+        App1 --> Envoy1
+        Envoy1 -->|"ShouldRateLimit()"| HM1["Hivemind"]
+    end
+
+    subgraph pod2 ["Pod / Instance 2"]
+        direction LR
+        Envoy2["Envoy Proxy"] --> App2["Application"]
+        App2 --> Envoy2
+        Envoy2 -->|"ShouldRateLimit()"| HM2["Hivemind"]
+    end
+
+    subgraph pod3 ["Pod / Instance N"]
+        direction LR
+        Envoy3["Envoy Proxy"] --> App3["Application"]
+        App3 --> Envoy3
+        Envoy3 -->|"ShouldRateLimit()"| HM3["Hivemind"]
+    end
+
+    Client --> Envoy1
+    Client --> Envoy2
+    Client --> Envoy3
+
+    classDef client fill:#f0f4ff,stroke:#4a6fa5,color:#222
+    classDef app fill:#dff5e1,stroke:#3a9e5c,color:#222
+    classDef envoy fill:#fff4d6,stroke:#c59a1a,color:#222
+    classDef hivemind fill:#f5dff5,stroke:#9a3a9e,color:#222
+
+    class Client client
+    class App1,App2,App3 app
+    class Envoy1,Envoy2,Envoy3 envoy
+    class HM1,HM2,HM3 hivemind
+```
+
+Each pod runs **three co-located components** as sidecars:
+
+1. **Envoy Proxy** — the pod's entry point. Intercepts inbound traffic, calls Hivemind's gRPC API (`ShouldRateLimit()`) for a rate limit decision, and proxies allowed requests to the application.
+2. **Application** — your service handling business logic, communicating bidirectionally with Envoy.
+3. **Hivemind** — makes sub-millisecond rate limit decisions locally, then synchronizes counter state with peers over a gossip-based mesh (UDP). No centralized datastore is required.
+
+Nodes discover each other through seed peers and form a full mesh. Counter state converges across the cluster via the gossip protocol (default interval: 100ms).
+
 ## Features
 
 - **Rust Implementation**: High performance and memory safety
